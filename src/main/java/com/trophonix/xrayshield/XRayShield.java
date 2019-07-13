@@ -1,5 +1,7 @@
 package com.trophonix.xrayshield;
 
+import com.mrpowergamerbr.temmiewebhook.DiscordMessage;
+import com.mrpowergamerbr.temmiewebhook.TemmieWebhook;
 import com.trophonix.xrayshield.events.OreBreakEvent;
 import com.trophonix.xrayshield.events.XRayListener;
 import lombok.Getter;
@@ -34,6 +36,9 @@ public class XRayShield extends JavaPlugin {
   private String alertConfig;
 
   private String logsMessageFormatConfig;
+
+  private String discordWebhookUrl;
+  private String discordWebhookFormat;
 
   @Getter private List<XRayOre> ores;
 
@@ -111,6 +116,9 @@ public class XRayShield extends JavaPlugin {
     sendAlertToOPs = getConfig().getBoolean("sendAlertToOPs", false);
     alertConfig = getConfig().getString("lang.alert", "&6[&eX-Ray Shield&6] &c%player% &8has mined &c%amount% %ore% &8in &c%time%&8!%n&8They may be x-raying. Last location: %location%");
     logsMessageFormatConfig = getConfig().getString("logs.messageFormat", "'['kk:ss'] %player% mined %amount% %ore% in %time% at %location%'");
+    discordWebhookUrl = getConfig().getString("discord.webhookUrl");
+    discordWebhookFormat = getConfig().getString("discord.messageFormat", "[%player%](https://mcuuid.net/?q=%player%) mined **%amount%** %ore% in %time% at `%location%`!");
+
   }
 
   public void oreBreak(OreBreakEvent event) {
@@ -131,6 +139,17 @@ public class XRayShield extends JavaPlugin {
       if (logs != null) logs.push(new SimpleDateFormat(replacePlaceholders(logsMessageFormatConfig, event.getPlayer(), event.getBlockType(), events.size(), xRayOre.getTimeString(), event.getLocation())).format(new Date()));
       Bukkit.getOnlinePlayers().stream().filter(player -> player.hasPermission("xrayshield.alert") || (sendAlertToOPs && player.isOp()))
               .forEach(player -> player.sendMessage(alert.split("%n")));
+
+      // Send a Discord message
+      if (discordWebhookUrl != null) {
+        String discordAlert = replacePlaceholders(discordWebhookFormat, event.getPlayer(), event.getBlockType(), events.size(), xRayOre.getTimeString(), event.getLocation());
+        getServer().getScheduler().runTaskAsynchronously(this, () -> {
+          TemmieWebhook webhook = new TemmieWebhook(discordWebhookUrl);
+          DiscordMessage message = new DiscordMessage(null, discordAlert, null);
+          webhook.sendMessage(message);
+        });
+      }
+
       playerLastAlerts.put(event.getPlayer().getUniqueId(), event.getLocation());
       if (!sendAlertEachVein) {
         breakEvents.removeAll(events);
@@ -159,7 +178,7 @@ public class XRayShield extends JavaPlugin {
   }
 
   private static String locationToString(Location location) {
-    return "x" + location.getBlockX() + " y" + location.getBlockY() + " z" + location.getBlockZ();
+    return location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ();
   }
 
   private static String replacePlaceholders(String string, Player player, Material blockType, int amount, String time, Location location) {

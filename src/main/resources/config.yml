@@ -52,4 +52,8 @@ logs:
 lang:
   alert: '&6[&eX-Ray Shield&6] &c%player% &8has mined &c%amount% %ore% &8in &c%time%&8!%n&8They may be x-raying. Last location: %location%'
 
+discord:
+  webhookUrl: null
+  messageFormat: '[%player%](https://mcuuid.net/?q=%player%) mined **%amount%** %ore% in %time% at `%location%`!'
+
 configVersion: ${project.version}

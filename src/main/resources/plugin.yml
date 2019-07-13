@@ -1,4 +1,4 @@
-name: 'XRayShield'
+name: 'UplolXRayShield'
 author: 'Trophonix'
 version: ${project.version}
 main: 'com.trophonix.xrayshield.XRayShield'
