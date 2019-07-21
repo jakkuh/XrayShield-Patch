@@ -1,5 +1,6 @@
 package com.trophonix.xrayshield;
 
+import com.github.zafarkhaja.semver.Version;
 import com.mrpowergamerbr.temmiewebhook.DiscordMessage;
 import com.mrpowergamerbr.temmiewebhook.TemmieWebhook;
 import com.trophonix.xrayshield.events.OreBreakEvent;
@@ -54,20 +55,20 @@ public class XRayShield extends JavaPlugin {
       saveDefaultConfig();
     } else {
       // update configs
-      double version = getConfig().getDouble("configVersion", 0);
+      Version lastVersion = Version.valueOf(getConfig().getString("configVersion", "0.0.0"));
 
-      if (version < 1.02) {
+      if (lastVersion.lessThan(Version.valueOf("1.02"))) {
         getConfig().set("logs.enabled", false);
         getConfig().set("logs.fileNameFormat", "dd'-'MM'-'yyyy'.log'");
         getConfig().set("logs.messageFormat", "'['kk:ss'] %player% mined %amount% %ore% in %time% at %location%'");
       }
 
-      if (version < 1.04) {
+      if (lastVersion.lessThan(Version.valueOf("1.04"))) {
         getConfig().set("logs.saveDelay", "5m");
       }
 
-      if (version == 0) {
-        getConfig().set("configVersion", Double.parseDouble(getDescription().getVersion()));
+      if (lastVersion.lessThan(Version.valueOf(getDescription().getVersion()))) {
+        getConfig().set("configVersion", getDescription().getVersion());
       }
 
       saveConfig();
