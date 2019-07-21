@@ -1,6 +1,5 @@
 package com.trophonix.xrayshield;
 
-import com.github.zafarkhaja.semver.Version;
 import com.mrpowergamerbr.temmiewebhook.DiscordMessage;
 import com.mrpowergamerbr.temmiewebhook.TemmieWebhook;
 import com.trophonix.xrayshield.events.OreBreakEvent;
@@ -23,172 +22,158 @@ import java.util.stream.Collectors;
 
 public class XRayShield extends JavaPlugin {
 
-  private static XRayShield INSTANCE;
+    private static XRayShield INSTANCE;
 
-  private List<OreBreakEvent> breakEvents;
-  private Map<UUID, Location> playerLastAlerts;
+    private List<OreBreakEvent> breakEvents;
+    private Map<UUID, Location> playerLastAlerts;
 
-  @Getter private XRayListener xRayListener;
-  @Getter private Logs logs;
+    @Getter
+    private XRayListener xRayListener;
+    @Getter
+    private Logs logs;
 
-  private boolean sendAlertEachVein;
-  private boolean sendAlertToOPs;
+    private boolean sendAlertEachVein;
+    private boolean sendAlertToOPs;
 
-  private String alertConfig;
+    private String alertConfig;
 
-  private String logsMessageFormatConfig;
+    private String logsMessageFormatConfig;
 
-  private String discordWebhookUrl;
-  private String discordWebhookFormat;
+    private String discordWebhookUrl;
+    private String discordWebhookFormat;
 
-  @Getter private List<XRayOre> ores;
+    @Getter
+    private List<XRayOre> ores;
 
-  @Override
-  public void onEnable() {
-    INSTANCE = this;
-    xRayListener = new XRayListener();
-    getServer().getPluginManager().registerEvents(xRayListener, this);
-    breakEvents = new ArrayList<>();
-    playerLastAlerts = new HashMap<>();
-    if (!new File(getDataFolder(), "config.yml").exists()) {
-      getDataFolder().mkdirs();
-      saveDefaultConfig();
-    } else {
-      // update configs
-      Version lastVersion = Version.valueOf(getConfig().getString("configVersion", "0.0.0"));
-
-      if (lastVersion.lessThan(Version.valueOf("1.02"))) {
-        getConfig().set("logs.enabled", false);
-        getConfig().set("logs.fileNameFormat", "dd'-'MM'-'yyyy'.log'");
-        getConfig().set("logs.messageFormat", "'['kk:ss'] %player% mined %amount% %ore% in %time% at %location%'");
-      }
-
-      if (lastVersion.lessThan(Version.valueOf("1.04"))) {
-        getConfig().set("logs.saveDelay", "5m");
-      }
-
-      if (lastVersion.lessThan(Version.valueOf(getDescription().getVersion()))) {
-        getConfig().set("configVersion", getDescription().getVersion());
-      }
-
-      saveConfig();
-    }
-    if (getConfig().getBoolean("logs.enabled", false)) {
-      logs = new Logs(new File(getDataFolder(), "logs"),
-              getConfig().getString("logs.fileNameFormat", "dd'-'MM'-'yyyy'.log'"));
-      long saveDelay = parseTime(getConfig().getString("logs.saveDelay", "5m"));
-      if (saveDelay > 0) Bukkit.getScheduler().runTaskTimer(this, logs::save, saveDelay * 20L, saveDelay * 20L);
-    }
-    ores = new ArrayList<>();
-    ConfigurationSection oreSection = getConfig().getConfigurationSection("ores");
-    oreSection.getKeys(false).forEach(oreName -> {
-      Material blockType = Material.getMaterial(oreName.toUpperCase().replace(' ', '_'));
-      if (blockType == null) {
-        Bukkit.getConsoleSender().sendMessage(ChatColor.RED + "[X-Ray Shield] INVALID MATERIAL: " + oreName);
-        return;
-      }
-      String timeString = oreSection.getString(oreName + ".time", "5m");
-      XRayOre xRayOre = new XRayOre(blockType, oreSection.getInt(oreName + ".amount", 10), timeString, parseTime(timeString));
-      ores.add(xRayOre);
-    });
-    getLogger().info("X-Ray Shield loaded " + ores.size() + " ores:");
-    ores.forEach(ore -> getLogger().info(" - " + ore.getBlockType().name() + " - " + ore.getAmount() + "x - " + ore.getTimeString()));
-  }
-
-  @Override
-  public void onDisable() {
-    HandlerList.unregisterAll(this);
-    xRayListener.getBlockPlacements().clear();
-    xRayListener = null;
-    logs.save();
-    logs = null;
-    breakEvents.clear();
-    breakEvents = null;
-    playerLastAlerts.clear();
-    playerLastAlerts = null;
-    ores.clear();
-    ores = null;
-  }
-
-  @Override
-  public void reloadConfig() {
-    super.reloadConfig();
-    sendAlertEachVein = getConfig().getBoolean("sendAlertEachVein", true);
-    sendAlertToOPs = getConfig().getBoolean("sendAlertToOPs", false);
-    alertConfig = getConfig().getString("lang.alert", "&6[&eX-Ray Shield&6] &c%player% &8has mined &c%amount% %ore% &8in &c%time%&8!%n&8They may be x-raying. Last location: %location%");
-    logsMessageFormatConfig = getConfig().getString("logs.messageFormat", "'['kk:ss'] %player% mined %amount% %ore% in %time% at %location%'");
-    discordWebhookUrl = getConfig().getString("discord.webhookUrl");
-    discordWebhookFormat = getConfig().getString("discord.messageFormat", "[%player%](https://mcuuid.net/?q=%player%) mined **%amount%** %ore% in %time% at `%location%`!");
-
-  }
-
-  public void oreBreak(OreBreakEvent event) {
-    breakEvents.add(event);
-    XRayOre xRayOre = ores.stream().filter(ore -> ore.getBlockType() == event.getBlockType()).findFirst().orElse(null);
-    if (xRayOre == null) return;
-    Bukkit.getScheduler().runTaskLater(this, () -> breakEvents.remove(event), xRayOre.getTime() * 20);
-    List<OreBreakEvent> events = breakEvents.stream()
-            .filter(oreBreakEvent -> oreBreakEvent.getBlockType() == event.getBlockType() &&
-                    oreBreakEvent.getPlayer().getUniqueId().equals(event.getPlayer().getUniqueId()))
-                    .collect(Collectors.toList());
-    if (events.size() >= xRayOre.getAmount()) {
-      Location last = playerLastAlerts.get(event.getPlayer().getUniqueId());
-      if (last != null && event.getPlayer().getLocation().distance(last) < 5) {
-        return;
-      }
-      String alert = replacePlaceholders(alertConfig, event.getPlayer(), event.getBlockType(), events.size(), xRayOre.getTimeString(), event.getLocation());
-      if (logs != null) logs.push(new SimpleDateFormat(replacePlaceholders(logsMessageFormatConfig, event.getPlayer(), event.getBlockType(), events.size(), xRayOre.getTimeString(), event.getLocation())).format(new Date()));
-      Bukkit.getOnlinePlayers().stream().filter(player -> player.hasPermission("xrayshield.alert") || (sendAlertToOPs && player.isOp()))
-              .forEach(player -> player.sendMessage(alert.split("%n")));
-
-      // Send a Discord message
-      if (discordWebhookUrl != null) {
-        String discordAlert = replacePlaceholders(discordWebhookFormat, event.getPlayer(), event.getBlockType(), events.size(), xRayOre.getTimeString(), event.getLocation());
-        getServer().getScheduler().runTaskAsynchronously(this, () -> {
-          TemmieWebhook webhook = new TemmieWebhook(discordWebhookUrl);
-          DiscordMessage message = new DiscordMessage(null, discordAlert, null);
-          webhook.sendMessage(message);
+    @Override
+    public void onEnable() {
+        INSTANCE = this;
+        xRayListener = new XRayListener();
+        getServer().getPluginManager().registerEvents(xRayListener, this);
+        breakEvents = new ArrayList<>();
+        playerLastAlerts = new HashMap<>();
+        if (!new File(getDataFolder(), "config.yml").exists()) {
+            getDataFolder().mkdirs();
+            saveDefaultConfig();
+        }
+        if (getConfig().getBoolean("logs.enabled", false)) {
+            logs = new Logs(new File(getDataFolder(), "logs"),
+                    getConfig().getString("logs.fileNameFormat", "dd'-'MM'-'yyyy'.log'"));
+            long saveDelay = parseTime(getConfig().getString("logs.saveDelay", "5m"));
+            if (saveDelay > 0) Bukkit.getScheduler().runTaskTimer(this, logs::save, saveDelay * 20L, saveDelay * 20L);
+        }
+        ores = new ArrayList<>();
+        ConfigurationSection oreSection = getConfig().getConfigurationSection("ores");
+        oreSection.getKeys(false).forEach(oreName -> {
+            Material blockType = Material.getMaterial(oreName.toUpperCase().replace(' ', '_'));
+            if (blockType == null) {
+                Bukkit.getConsoleSender().sendMessage(ChatColor.RED + "[X-Ray Shield] INVALID MATERIAL: " + oreName);
+                return;
+            }
+            String timeString = oreSection.getString(oreName + ".time", "5m");
+            XRayOre xRayOre = new XRayOre(blockType, oreSection.getInt(oreName + ".amount", 10), timeString, parseTime(timeString));
+            ores.add(xRayOre);
         });
-      }
-
-      playerLastAlerts.put(event.getPlayer().getUniqueId(), event.getLocation());
-      if (!sendAlertEachVein) {
-        breakEvents.removeAll(events);
-      }
+        getLogger().info("X-Ray Shield loaded " + ores.size() + " ores:");
+        ores.forEach(ore -> getLogger().info(" - " + ore.getBlockType().name() + " - " + ore.getAmount() + "x - " + ore.getTimeString()));
     }
-  }
 
-  public static XRayShield get() {
-    return INSTANCE;
-  }
-
-  private static long parseTime(String string) {
-    try {
-      return Long.parseLong(string);
-    } catch (NumberFormatException ignored) {
-      if (string.contains("h")) {
-        return TimeUnit.HOURS.toSeconds(Long.parseLong(string.replace("h", "")));
-      } else if (string.contains("m")) {
-        return TimeUnit.MINUTES.toSeconds(Long.parseLong(string.replace("m", "")));
-      } else if (string.contains("s")) {
-        return Long.parseLong(string.replace("s", ""));
-      } else {
-        return -1;
-      }
+    @Override
+    public void onDisable() {
+        HandlerList.unregisterAll(this);
+        xRayListener.getBlockPlacements().clear();
+        xRayListener = null;
+        if (logs!=null)
+            logs.save();
+        logs = null;
+        breakEvents.clear();
+        breakEvents = null;
+        playerLastAlerts.clear();
+        playerLastAlerts = null;
+        ores.clear();
+        ores = null;
     }
-  }
 
-  private static String locationToString(Location location) {
-    return location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ();
-  }
+    @Override
+    public void reloadConfig() {
+        super.reloadConfig();
+        sendAlertEachVein = getConfig().getBoolean("sendAlertEachVein", true);
+        sendAlertToOPs = getConfig().getBoolean("sendAlertToOPs", false);
+        alertConfig = getConfig().getString("lang.alert", "&6[&eX-Ray Shield&6] &c%player% &8has mined &c%amount% %ore% &8in &c%time%&8!%n&8They may be x-raying. Last location: %location%");
+        logsMessageFormatConfig = getConfig().getString("logs.messageFormat", "'['kk:ss'] %player% mined %amount% %ore% in %time% at %location%'");
+        discordWebhookUrl = getConfig().getString("discord.webhookUrl");
+        discordWebhookFormat = getConfig().getString("discord.messageFormat", "[%player%](https://mcuuid.net/?q=%player%) mined **%amount%** %ore% in %time% at `%location%`!");
 
-  private static String replacePlaceholders(String string, Player player, Material blockType, int amount, String time, Location location) {
-    return ChatColor.translateAlternateColorCodes('&', string)
-            .replace("%player%", player.getName())
-            .replace("%ore%", blockType.name().toLowerCase().replace("_", " "))
-            .replace("%amount%", Integer.toString(amount))
-            .replace("%time%", time)
-            .replace("%location%", locationToString(location));
-  }
+    }
+
+    public void oreBreak(OreBreakEvent event) {
+        breakEvents.add(event);
+        XRayOre xRayOre = ores.stream().filter(ore -> ore.getBlockType() == event.getBlockType()).findFirst().orElse(null);
+        if (xRayOre == null) return;
+        Bukkit.getScheduler().runTaskLater(this, () -> breakEvents.remove(event), xRayOre.getTime() * 20);
+        List<OreBreakEvent> events = breakEvents.stream()
+                .filter(oreBreakEvent -> oreBreakEvent.getBlockType() == event.getBlockType() &&
+                        oreBreakEvent.getPlayer().getUniqueId().equals(event.getPlayer().getUniqueId()))
+                .collect(Collectors.toList());
+        if (events.size() >= xRayOre.getAmount()) {
+            Location last = playerLastAlerts.get(event.getPlayer().getUniqueId());
+            if (last != null && event.getPlayer().getLocation().distance(last) < 5) {
+                return;
+            }
+            String alert = replacePlaceholders(alertConfig, event.getPlayer(), event.getBlockType(), events.size(), xRayOre.getTimeString(), event.getLocation());
+            if (logs != null)
+                logs.push(new SimpleDateFormat(replacePlaceholders(logsMessageFormatConfig, event.getPlayer(), event.getBlockType(), events.size(), xRayOre.getTimeString(), event.getLocation())).format(new Date()));
+            Bukkit.getOnlinePlayers().stream().filter(player -> player.hasPermission("xrayshield.alert") || (sendAlertToOPs && player.isOp()))
+                    .forEach(player -> player.sendMessage(alert.split("%n")));
+
+            // Send a Discord message
+            if (discordWebhookUrl != null) {
+                String discordAlert = replacePlaceholders(discordWebhookFormat, event.getPlayer(), event.getBlockType(), events.size(), xRayOre.getTimeString(), event.getLocation());
+                getServer().getScheduler().runTaskAsynchronously(this, () -> {
+                    TemmieWebhook webhook = new TemmieWebhook(discordWebhookUrl);
+                    DiscordMessage message = new DiscordMessage(null, discordAlert, null);
+                    webhook.sendMessage(message);
+                });
+            }
+
+            playerLastAlerts.put(event.getPlayer().getUniqueId(), event.getLocation());
+            if (!sendAlertEachVein) {
+                breakEvents.removeAll(events);
+            }
+        }
+    }
+
+    public static XRayShield get() {
+        return INSTANCE;
+    }
+
+    private static long parseTime(String string) {
+        try {
+            return Long.parseLong(string);
+        } catch (NumberFormatException ignored) {
+            if (string.contains("h")) {
+                return TimeUnit.HOURS.toSeconds(Long.parseLong(string.replace("h", "")));
+            } else if (string.contains("m")) {
+                return TimeUnit.MINUTES.toSeconds(Long.parseLong(string.replace("m", "")));
+            } else if (string.contains("s")) {
+                return Long.parseLong(string.replace("s", ""));
+            } else {
+                return -1;
+            }
+        }
+    }
+
+    private static String locationToString(Location location) {
+        return location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ();
+    }
+
+    private static String replacePlaceholders(String string, Player player, Material blockType, int amount, String time, Location location) {
+        return ChatColor.translateAlternateColorCodes('&', string)
+                .replace("%player%", player.getName())
+                .replace("%ore%", blockType.name().toLowerCase().replace("_", " "))
+                .replace("%amount%", Integer.toString(amount))
+                .replace("%time%", time)
+                .replace("%location%", locationToString(location));
+    }
 
 }
